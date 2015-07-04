@@ -563,7 +563,7 @@ class TransportTest(unittest.TestCase):
 
         self.assertEqual(b'Bye!abcdef', recv_buff)
 
-        self.assertEqual(('\nCome', ('unknown', 0)), cs.recvfrom(5))
+        self.assertEqual((b'\nCome', ('unknown', 0)), cs.recvfrom(5))
 
         recv_buff=bytearray(b'_abcde_fghij_ZZ')
         self.assertEqual((13, ('unknown', 0)), cs.recvfrom_into(recv_buff))
