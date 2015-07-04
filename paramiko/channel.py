@@ -608,17 +608,33 @@ class Channel (ClosingContextManager):
 
         return out
 
+    def recvfrom(self, nbytes=0):
+        """
+        Receive data from the channel.  The return value is a tuple of
+        (string, address) representing the data and the address.
+        The maximum amount of data to be received at once is specified by
+        ``nbytes`` which if 0, defaults to the number of bytes available.
+
+        :param int nbytes: maximum number of bytes to read.
+        :return: data received and address as a `tuple`
+
+        :raises socket.timeout:
+            if no data is ready before the timeout set by `settimeout`.
+        """
+        o = self.recv(nbytes)
+        return (o, self.getpeername())
+
     def recv_into(self, buff, nbytes=0):
         """
         Receive data from the channel.  The return value is a tuple of
-        (nbytes, address) representing the number bytes returned.
-        The maximum amount of data to be received at once is specified by
-        ``nbytes`` which if 0, defaults to the number of bytes available in
-        the buffer.
+        (nbytes, address) representing the number bytes returned and an
+        address representation.  The maximum amount of data to be received at
+        once is specified by ``nbytes``, which if 0, defaults to the number of
+        bytes available in the buffer.
 
         :param str buff: a buffer for the received bytes
         :param int nbytes: maximum number of bytes to read.
-        :return: int number of bytes added
+        :return: number of bytes added
 
         :raises socket.timeout:
             if no data is ready before the timeout set by `settimeout`.
@@ -631,10 +647,10 @@ class Channel (ClosingContextManager):
     def recvfrom_into(self, buff, nbytes=0):
         """
         Receive data from the channel.  The return value is a tuple of
-        (nbytes, address) representing the number bytes returned.
-        The maximum amount of data to be received at once is specified by
-        ``nbytes`` which if 0, defaults to the number of bytes available in
-        the buffer.
+        (nbytes, address) representing the number bytes returned and an
+        address representation. The maximum amount of data to be received at
+        once is specified by ``nbytes``, which if 0, defaults to the number of
+        bytes available in the buffer.
 
         :param str buff: a buffer for the received bytes
         :param int nbytes: maximum number of bytes to read.

@@ -563,9 +563,11 @@ class TransportTest(unittest.TestCase):
 
         self.assertEqual(b'Bye!abcdef', recv_buff)
 
-        recv_buff=bytearray(b'ZXXXX_abcde_fghij_ZZ')
-        self.assertEqual((18, ('unknown', 0)), cs.recvfrom_into(recv_buff))
-        self.assertEqual(b'\nCome Again later.ZZ', recv_buff)
+        self.assertEqual(('\nCome', ('unknown', 0)), cs.recvfrom(5))
+
+        recv_buff=bytearray(b'_abcde_fghij_ZZ')
+        self.assertEqual((13, ('unknown', 0)), cs.recvfrom_into(recv_buff))
+        self.assertEqual(b' Again later.ZZ', recv_buff)
         cs.close()
 
     def test_G_stderr_select(self):
