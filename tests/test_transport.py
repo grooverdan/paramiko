@@ -548,11 +548,24 @@ class TransportTest(unittest.TestCase):
 
         ss, _ = greeting_server.accept()
         ss.send(b'Hello!\n')
+        sch.send(cch.recv(8192))
+
+        self.assertEqual(b'Hello!\n', cs.recv(7))
+
+        ss.send(b'Bye!\nCome Again later.')
         ss.close()
+
         sch.send(cch.recv(8192))
         sch.close()
 
-        self.assertEqual(b'Hello!\n', cs.recv(7))
+        recv_buff=bytearray(b'XXXXabcdef')
+        self.assertEqual(4, cs.recv_into(recv_buff,4))
+
+        self.assertEqual(b'Bye!abcdef', recv_buff)
+
+        recv_buff=bytearray(b'ZXXXX_abcde_fghij_ZZ')
+        self.assertEqual((18, ('unknown', 0)), cs.recvfrom_into(recv_buff))
+        self.assertEqual(b'\nCome Again later.ZZ', recv_buff)
         cs.close()
 
     def test_G_stderr_select(self):
