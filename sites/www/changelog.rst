@@ -5,6 +5,8 @@ Changelog
 * :feature:`553` Add `.Channel.recv_into`, `.Channel.recvfrom_into` and
   `.Channel.recvfrom` for a more complete representation of the Python
   ``socket`` class.  Courtesy of Daniel Black.
+* :support:`582` Fix some old ``setup.py`` related helper code which was
+  breaking ``bdist_dumb`` on Mac OS X. Thanks to Peter Odding for the patch.
 * :bug:`22 major` Try harder to connect to multiple network families (e.g. IPv4
   vs IPv6) in case of connection issues; this helps with problems such as hosts
   which resolve both IPv4 and IPv6 addresses but are only listening on IPv4.
