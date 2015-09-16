@@ -283,6 +283,7 @@ class Transport (threading.Thread, ClosingContextManager):
         self._forward_agent_handler = None
         self._x11_handler = None
         self._tcp_handler = None
+        self._unix_handler = None
 
         self.saved_exception = None
         self.clear_to_send = threading.Event()
@@ -672,11 +673,17 @@ class Transport (threading.Thread, ClosingContextManager):
 
         :param str kind:
             the kind of channel requested (usually ``"session"``,
-            ``"forwarded-tcpip"``, ``"direct-tcpip"``, or ``"x11"``)
+            ``"forwarded-tcpip"``, ``"direct-tcpip"``, ``"x11"``,
+            ``"forwarded-streamlocal@openssh.com"``,
+            ``"forwarded-streamlocal"``, ``"direct-streamlocal@openssh.com"``,
+             or ``"direct-streamlocal``)
         :param tuple dest_addr:
             the destination address (address + port tuple) of this port
             forwarding, if ``kind`` is ``"forwarded-tcpip"`` or
-            ``"direct-tcpip"`` (ignored for other channel types)
+            ``"direct-tcpip"``, A unix socket string if ``kind`` is
+            ``"direct-streamlocal@openssh.com"``, ``"direct-streamlocal"``,
+            ``"forwarded-streamlocal@openssh.com"``, or
+            ``"forwarded-streamlocal"``. (ignored for other channel types).
         :param src_addr: the source address of this port forwarding, if
             ``kind`` is ``"forwarded-tcpip"``, ``"direct-tcpip"``, or ``"x11"``
         :param int window_size:
@@ -689,6 +696,10 @@ class Transport (threading.Thread, ClosingContextManager):
         :raises SSHException: if the request is rejected or the session ends
             prematurely
 
+        .. versionchanged:: 1.16
+            Added kind ``"direct-streamlocal@openssh.com"``,
+            ``"direct-streamlocal"``, ``"forwarded-streamlocal@openssh.com"``
+            and ``"forwarded-streamlocal"``.
         .. versionchanged:: 1.15
             Added the ``window_size`` and ``max_packet_size`` arguments.
         """
@@ -701,16 +712,24 @@ class Transport (threading.Thread, ClosingContextManager):
             chanid = self._next_channel()
             m = Message()
             m.add_byte(cMSG_CHANNEL_OPEN)
+            if kind in ['direct-streamlocal', 'forwarded-streamlocal']:
+                kind += '@openssh.com'
             m.add_string(kind)
             m.add_int(chanid)
             m.add_int(window_size)
             m.add_int(max_packet_size)
-            if (kind == 'forwarded-tcpip') or (kind == 'direct-tcpip'):
+            if kind in [ 'direct-streamlocal@openssh.com',
+                         'forwarded-streamlocal@openssh.com']:
+                m.add_string(dest_addr)
+            elif (kind == 'forwarded-tcpip') or (kind == 'direct-tcpip'):
                 m.add_string(dest_addr[0])
-                m.add_int(dest_addr[1])
-                m.add_string(src_addr[0])
-                m.add_int(src_addr[1])
-            elif kind == 'x11':
+                m.add_int(65536 if dest_addr[1] < 0 else dest_addr[1])
+            if kind == 'forwarded-streamlocal@openssh.com':
+                # reserved
+                m.add_string('')
+            elif kind in ['forwarded-tcpip', 'direct-tcpip',
+                          'direct-streamlocal@openssh.com',
+                          'forwarded-streamlocal@openssh.com', 'x11']:
                 m.add_string(src_addr[0])
                 m.add_int(src_addr[1])
             chan = Channel(chanid)
@@ -797,6 +816,54 @@ class Transport (threading.Thread, ClosingContextManager):
             return
         self._tcp_handler = None
         self.global_request('cancel-tcpip-forward', (address, port), wait=True)
+
+    def request_unix_forward(self, unix_socket, handler=None):
+        """
+        Ask the server to forward connections from a listening unix_socket on
+        the server, across this SSH session.
+
+        If a handler is given, that handler is called from a different thread
+        whenever a forwarded connection arrives.  The handler parameters are::
+
+            handler(channel, (origin_addr, origin_port), unix_socket))
+
+        where ``unix_socket`` is the socket that the server was listening on.
+
+        If no handler is set, the default behavior is to send new incoming
+        forwarded connections into the accept queue, to be picked up via
+        `accept`.
+
+        :param str unix_socket: the socket to bind when forwarding
+        :param callable handler:
+            optional handler for incoming forwarded connections, of the form
+            ``func(Channel, (str, int), str)``.
+
+        :raises SSHException: if the server refused the Unix forward request
+        """
+        if not self.active:
+            raise SSHException('SSH session not active')
+        response = self.global_request('streamlocal-forward@openssh.com',
+                                       (unix_socket), wait=True)
+        if response is None:
+            raise SSHException('Unix socket forwarding request denied')
+        if handler is None:
+            def default_handler(channel, src_addr, dest):
+                self._queue_incoming_channel(channel)
+            handler = default_handler
+        self._unix_handler = handler
+
+    def cancel_unix_forward(self, unix_socket):
+        """
+        Ask the server to cancel a previous unix-forwarding request.  No more
+        connections to the given unix_socket port will be forwarded across this
+        ssh connection.
+
+        :param str unix_socket: the socket to stop forwarding
+        """
+        if not self.active:
+            return
+        self._unix_handler = None
+        self.global_request('cancel-streamlocal-forward@openssh.com', (unix_socket), wait=True)
 
     def open_sftp_client(self):
         """
@@ -2086,6 +2153,16 @@ class Transport (threading.Thread, ClosingContextManager):
                 my_chanid = self._next_channel()
             finally:
                 self.lock.release()
+        elif (kind == 'forwarded-streamlocal@openssh.com') and (self._unix_handler is not None):
+            server_socket = m.get_text()
+            origin_addr = m.get_text()
+            origin_port = m.get_int()
+            self._log(DEBUG, 'Incoming unix forwarded connection from %s:%d' % (origin_addr, origin_port))
+            self.lock.acquire()
+            try:
+                my_chanid = self._next_channel()
+            finally:
+                self.lock.release()
         elif not self.server_mode:
             self._log(DEBUG, 'Rejecting "%s" channel request from server.' % kind)
             reject = True
@@ -2104,6 +2181,13 @@ class Transport (threading.Thread, ClosingContextManager):
                 origin_port = m.get_int()
                 reason = self.server_object.check_channel_direct_tcpip_request(
                     my_chanid, (origin_addr, origin_port), (dest_addr, dest_port))
+            elif kind == 'direct-streamlocal@openssh.com':
+                # handle direct-streamlocal requests comming from the client
+                dest_socket = m.get_text()
+                origin_addr = m.get_text()
+                origin_port = m.get_int()
+                reason = self.server_object.check_channel_direct_unix_request(
+                    my_chanid, (origin_addr, origin_port), dest_socket)
             else:
                 reason = self.server_object.check_channel_request(kind, my_chanid)
             if reason != OPEN_SUCCEEDED:

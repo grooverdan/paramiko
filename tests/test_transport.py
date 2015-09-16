@@ -109,6 +109,10 @@ class NullServer (ServerInterface):
         self._tcpip_dest = destination
         return OPEN_SUCCEEDED
 
+    def check_channel_direct_unix_request(self, chanid, origin, destination):
+        self._unix_dest = destination
+        return OPEN_SUCCEEDED
+
 
 class TransportTest(unittest.TestCase):
     def setUp(self):
@@ -525,10 +529,10 @@ class TransportTest(unittest.TestCase):
         self.tc.cancel_port_forward('127.0.0.1', port)
         self.assertTrue(self.server._listen is None)
 
-    def test_F_port_forwarding(self):
+    def test_F_tcp_port_forwarding(self):
         """
         verify that a client can forward new connections from a locally-
-        forwarded port.
+        forwarded tcp port.
         """
         self.setup_test_server()
         chan = self.tc.open_session()
@@ -569,6 +573,40 @@ class TransportTest(unittest.TestCase):
         self.assertEqual((13, ('unknown', 0)), cs.recvfrom_into(recv_buff))
         self.assertEqual(b' Again later.ZZ', recv_buff)
         cs.close()
+
+    def test_F_unix_socket_forwarding(self):
+        """
+        verify that a client can forward new connections from a locally-
+        forwarded tcp port.
+        """
+        self.setup_test_server()
+        chan = self.tc.open_session()
+        chan.exec_command('yes')
+        schan = self.ts.accept(1.0)
+
+        # open a port on the "server" that the client will ask to connections
+        # on the remove end to forward to.
+        greeting_server = socket.socket()
+        greeting_server.bind(('127.0.0.1', 0))
+        greeting_server.listen(1)
+        self.tc.open_channel('forwarded-streamlocal', 'remote.sock',
+                             greeting_server.getsockname())
+
+        # connect to remote socket (which forwards back to greeting_server
+        cs = self.tc.open_channel('direct-streamlocal', 'remote.sock', ('', 0))
+
+        ss, _ = greeting_server.accept()
+        ss.send(b'Hello!\n')
+
+        self.assertEqual(b'Hello!\n', cs.recv(7))
+
+        cs.send(b'Good morning')
+
+        self.assertEqual(b'Good morning', ss.recv())
+
+        ss.close()
+        cs.close()
+
 
     def test_G_stderr_select(self):
         """
